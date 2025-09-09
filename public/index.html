@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设备使用统计</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.0.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.2.0"></script>
+</head>
+<body class="bg-gray-100">
+<div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold text-center mb-8 text-blue-600">设备使用统计</h1>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- 左侧表单 -->
+        <div class="lg:col-span-1">
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6 sticky top-4">
+                <h2 class="text-xl font-semibold mb-4">添加/更新设备</h2>
+                <form id="deviceForm" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Secret Key</label>
+                        <input type="password" id="secret" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">设备名称</label>
+                        <input type="text" id="device" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">应用名称</label>
+                        <input type="text" id="app_name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+                    </div>
+                    <button type="submit" class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+                        提交
+                    </button>
+                </form>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-semibold mb-4">设备列表</h2>
+                <div id="devicesList" class="space-y-3">
+                    <!-- 设备卡片将通过JS动态加载 -->
+                    <div class="text-center py-8 text-gray-400" id="loadingDevices">加载设备中...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧统计 -->
+        <div class="lg:col-span-2" id="statsSection">
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 id="statsTitle" class="text-xl font-semibold">请选择设备查看统计</h2>
+                    <button id="refreshStats" class="px-3 py-1 text-sm bg-gray-100 rounded-md hover:bg-gray-200 transition-colors hidden">
+                        <span class="flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            刷新
+                        </span>
+                    </button>
+                </div>
+
+                <div id="currentUsage" class="mb-6 hidden">
+                    <h3 class="text-lg font-medium mb-2">当前使用情况</h3>
+                    <div class="bg-blue-50 p-4 rounded-lg">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-sm text-blue-800">当前应用</p>
+                                <p id="currentApp" class="text-xl font-bold"></p>
+                            </div>
+                            <div>
+                                <p class="text-sm text-blue-800">已运行时间</p>
+                                <p id="currentDuration" class="text-xl font-bold"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <div class="bg-white p-4 rounded-lg border border-gray-200" style="height: 300px;">
+                        <h3 class="text-lg font-medium mb-4">应用使用时间</h3>
+                        <canvas id="appUsageChart" height="250"></canvas>
+                    </div>
+
+                    <div class="bg-white p-4 rounded-lg border border-gray-200" style="height: 300px;">
+                        <h3 class="text-lg font-medium mb-4">24小时使用分布</h3>
+                        <canvas id="hourlyUsageChart" height="250"></canvas>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <h3 class="text-lg font-medium p-4 border-b border-gray-200">详细使用数据</h3>
+                    <div id="usageDetails" class="p-4">
+                        <p class="text-gray-500 text-center py-8">选择设备后显示详细统计数据</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentDevice = null;
+    let appUsageChart = null;
+    let hourlyUsageChart = null;
+    let refreshInterval = null;
+
+    // 获取设备列表
+    async function fetchDevices() {
+        try {
+            document.getElementById('loadingDevices').textContent = '加载设备中...';
+            const response = await fetch('/api/devices');
+            const data = await response.json();
+
+            if (data.length === 0) {
+                document.getElementById('loadingDevices').textContent = '暂无设备数据';
+            } else {
+                document.getElementById('loadingDevices').remove();
+                renderDevices(data);
+            }
+        } catch (error) {
+            console.error('获取设备列表失败:', error);
+            document.getElementById('loadingDevices').textContent = '加载失败，请重试';
+        }
+    }
+
+    // 获取设备统计
+    async function fetchDeviceStats(deviceId) {
+        try {
+            currentDevice = deviceId;
+            document.getElementById('refreshStats').classList.remove('hidden');
+
+            const response = await fetch(`/api/stats/${deviceId}`);
+            if (!response.ok) throw new Error('获取统计失败');
+
+            const data = await response.json();
+            renderStats(deviceId, data);
+
+            // 如果设备正在运行，设置定时刷新
+            setupAutoRefresh(deviceId, data);
+        } catch (error) {
+            console.error('获取设备统计失败:', error);
+            alert('获取统计信息失败，请检查控制台');
+        }
+    }
+
+    // 设置自动刷新
+    function setupAutoRefresh(deviceId, stats) {
+        // 清除之前的定时器
+        if (refreshInterval) clearInterval(refreshInterval);
+
+        // 检查是否有正在运行的应用
+        const isRunning = stats.currentAppRunningTime > 0;
+
+        if (isRunning) {
+            // 如果设备正在运行，每30秒刷新一次
+            refreshInterval = setInterval(() => {
+                fetchDeviceStats(deviceId);
+            }, 30000);
+        }
+    }
+
+    // 渲染设备列表
+    function renderDevices(devices) {
+        const container = document.getElementById('devicesList');
+        container.innerHTML = '';
+
+        devices.forEach(device => {
+            const isCurrent = currentDevice === device.device;
+            const runningTime = device.running ?
+                formatDuration(Math.floor((new Date() - new Date(device.startTime)) / 1000)) :
+                '未运行';
+
+            const deviceCard = document.createElement('div');
+            deviceCard.className = `border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer ${
+                isCurrent ? 'ring-2 ring-blue-500' : ''
+            }`;
+            deviceCard.dataset.device = device.device;
+            deviceCard.innerHTML = `
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="font-bold text-lg">${device.device}</h3>
+                        <p class="text-gray-600 text-sm mt-1">
+                            <span class="font-medium">当前应用:</span> ${device.app_name || '无'}
+                        </p>
+                    </div>
+                    <span class="inline-block px-2 py-1 text-xs rounded-full ${
+                device.running ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+            }">
+                        ${device.running ? '运行中' : '已停止'}
+                    </span>
+                </div>
+                <div class="mt-3 text-xs text-gray-500">
+                    ${device.running ? `已运行: ${runningTime}` : '最后运行: ' + formatDate(device.startTime)}
+                </div>
+            `;
+
+            deviceCard.addEventListener('click', () => {
+                document.querySelectorAll('#devicesList > div').forEach(card => {
+                    card.classList.remove('ring-2', 'ring-blue-500');
+                });
+                deviceCard.classList.add('ring-2', 'ring-blue-500');
+                fetchDeviceStats(device.device);
+            });
+
+            container.appendChild(deviceCard);
+        });
+    }
+
+    // 渲染统计信息
+    function renderStats(deviceId, stats) {
+        document.getElementById('statsTitle').textContent = `${deviceId} 使用统计`;
+        document.getElementById('currentUsage').classList.toggle('hidden', !stats.currentApp);
+
+        // 更新当前使用情况
+        if (stats.currentApp) {
+            document.getElementById('currentApp').textContent = stats.currentApp;
+            document.getElementById('currentDuration').textContent =
+                `${stats.currentAppRunningTime} 分钟 (${formatDuration(stats.currentAppRunningTime * 60)})`;
+        }
+
+        // 更新图表
+        updateAppUsageChart(stats);
+        updateHourlyUsageChart(stats);
+
+        // 渲染详细数据
+        renderUsageDetails(stats);
+    }
+
+    // 更新应用使用时间图表
+    function updateAppUsageChart(stats) {
+        const ctx = document.getElementById('appUsageChart').getContext('2d');
+        const labels = Object.keys(stats.appStats);
+        const data = Object.values(stats.appStats);
+        const colors = generateColors(labels.length);
+
+        if (appUsageChart) appUsageChart.destroy();
+
+        appUsageChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: colors,
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.raw || 0;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = Math.round((duration / stats.totalUsage) * 100) || 0;
+                                return `${label}: ${value}分钟 (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // 更新24小时使用图表
+    function updateHourlyUsageChart(stats) {
+        const ctx = document.getElementById('hourlyUsageChart').getContext('2d');
+
+        // 确保销毁旧图表
+        if (hourlyUsageChart) {
+            hourlyUsageChart.destroy();
+            hourlyUsageChart = null;
+        }
+
+        // 创建新图表
+        hourlyUsageChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: Array.from({length: 24}, (_, i) => `${i}:00`),
+                datasets: [{
+                    label: '使用时间(分钟)',
+                    data: stats.hourlyStats,
+                    backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        suggestedMax: Math.max(...stats.hourlyStats) * 1.2 || 10  // 添加默认值
+                    }
+                }
+            }
+        });
+    }
+    // 渲染详细数据
+    function renderUsageDetails(stats) {
+        const container = document.getElementById('usageDetails');
+        const totalHours = (stats.totalUsage / 60).toFixed(1);
+
+        // 总使用时间
+        let html = `
+            <div class="mb-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-blue-50 p-3 rounded-lg">
+                    <p class="text-sm text-blue-800 font-medium">总使用时间</p>
+                    <p class="text-xl font-bold">${stats.totalUsage} 分钟</p>
+                </div>
+                <div class="bg-blue-50 p-3 rounded-lg">
+                    <p class="text-sm text-blue-800 font-medium">约合</p>
+                    <p class="text-xl font-bold">${totalHours} 小时</p>
+                </div>
+                <div class="bg-blue-50 p-3 rounded-lg">
+                    <p class="text-sm text-blue-800 font-medium">应用数量</p>
+                    <p class="text-xl font-bold">${Object.keys(stats.appStats).length}</p>
+                </div>
+                <div class="bg-blue-50 p-3 rounded-lg">
+                    <p class="text-sm text-blue-800 font-medium">最常用应用</p>
+                    <p class="text-xl font-bold">${getTopApp(stats.appStats)}</p>
+                </div>
+            </div>
+        `;
+
+        // 按应用统计
+        html += `
+            <div class="mb-8">
+                <h4 class="font-bold mb-3 text-lg">应用使用时间</h4>
+                <div class="space-y-3">
+        `;
+
+        const sortedApps = Object.entries(stats.appStats)
+            .sort((a, b) => b[1] - a[1]);
+
+        sortedApps.forEach(([app, duration]) => {
+            const percentage = Math.round(
+                (stats.totalUsage > 0 ? (duration / stats.totalUsage) : 0) * 100
+            );
+
+            html += `
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span>${app}</span>
+                        <span>${duration === 0 ? "小于1" : duration}分钟 (${percentage}%)</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-blue-600 h-2 rounded-full" style="width: ${percentage}%"></div>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += `</div></div>`;
+
+        // 24小时详细统计
+        html += `
+            <div>
+                <h4 class="font-bold mb-3 text-lg">24小时使用分布</h4>
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        `;
+
+        stats.hourlyStats.forEach((duration, hour) => {
+            const maxDuration = Math.max(...stats.hourlyStats);
+            const percentage = maxDuration > 0 ? Math.round((duration / maxDuration) * 100) : 0;
+            const hourLabel = `${hour.toString().padStart(2, '0')}:00 - ${(hour + 1).toString().padStart(2, '0')}:00`;
+
+            html += `
+                <div class="border p-3 rounded-lg">
+                    <p class="text-sm font-medium">${hourLabel}</p>
+                    <p class="text-lg font-bold mb-1">${duration}分钟</p>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-blue-600 h-2 rounded-full" style="width: ${percentage}%"></div>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += `</div></div>`;
+        container.innerHTML = html;
+    }
+
+    // 获取最常用应用
+    function getTopApp(appStats) {
+        if (!appStats || Object.keys(appStats).length === 0) return '无';
+        return Object.entries(appStats).reduce((a, b) => a[1] > b[1] ? a : b)[0];
+    }
+
+    // 格式化持续时间
+    function formatDuration(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        let result = [];
+        if (hours > 0) result.push(`${hours}小时`);
+        if (minutes > 0) result.push(`${minutes}分钟`);
+        return result.join(' ') || '不到1分钟';  // 修改这里
+    }
+
+    // 格式化日期
+    function formatDate(dateString) {
+        const date = new Date(dateString);
+        return date.toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    // 生成颜色数组
+    function generateColors(count) {
+        const colors = [];
+        const hueStep = 360 / count;
+
+        for (let i = 0; i < count; i++) {
+            const hue = i * hueStep;
+            colors.push(`hsl(${hue}, 70%, 60%)`);
+        }
+
+        return colors;
+    }
+
+    // 提交表单
+    document.getElementById('deviceForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const secret = document.getElementById('secret').value;
+        const device = document.getElementById('device').value;
+        const app_name = document.getElementById('app_name').value;
+
+        if (!secret || !device || !app_name) {
+            alert('请填写所有字段');
+            return;
+        }
+
+        const btn = e.target.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        btn.innerHTML = '提交中...';
+
+        try {
+            const response = await fetch('/api', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ secret, device, app_name })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                document.getElementById('deviceForm').reset();
+                fetchDevices();
+
+                // 如果更新的是当前查看的设备，刷新统计
+                if (currentDevice === device) {
+                    fetchDeviceStats(device);
+                }
+            } else {
+                alert(data.error || '操作失败');
+            }
+        } catch (error) {
+            console.error('提交失败:', error);
+            alert('提交失败，请检查控制台');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '提交';
+        }
+    });
+
+    // 刷新统计按钮
+    document.getElementById('refreshStats').addEventListener('click', () => {
+        if (currentDevice) {
+            fetchDeviceStats(currentDevice);
+        }
+    });
+
+    // 初始加载
+    fetchDevices();
+</script>
+</body>
+</html>

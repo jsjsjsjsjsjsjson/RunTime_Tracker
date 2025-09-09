@@ -1,0 +1,127 @@
+/* 自定义样式补充Tailwind */
+.container {
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+#devicesList {
+    min-height: 200px;
+    transition: all 0.3s ease;
+}
+
+/* 图表容器响应式设置 */
+.chart-container {
+    position: relative;
+    height: 400px;
+    width: 100%;
+}
+
+/* 表格优化 */
+.table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+table {
+    width: 100%;
+    min-width: 600px;
+    border-collapse: separate;
+    border-spacing: 0;
+    background-color: white;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+th {
+    background-color: #f8fafc;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+    font-size: 0.75rem;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+td {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #e2e8f0;
+    color: #334155;
+    font-size: 0.875rem;
+}
+
+tr:last-child td {
+    border-bottom: none;
+}
+
+tr:hover td {
+    background-color: #f8fafc;
+}
+
+/* 卡片悬停效果 */
+.card-hover {
+    transition: all 0.2s ease;
+}
+
+.card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* 加载动画 */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* 响应式调整 */
+@media (max-width: 1024px) {
+    .chart-container {
+        height: 350px;
+    }
+}
+
+@media (max-width: 768px) {
+    .container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    .chart-container {
+        height: 300px;
+    }
+
+    th, td {
+        padding: 0.75rem 1rem;
+    }
+}

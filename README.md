@@ -2,7 +2,7 @@
 
 一个时间跟踪应用程序，用于监控和管理您的设备使用时间。
 
-演示站点：[https://sleepy.1812z.top/](https://sleepy.1812z.top/)
+演示站点：[https://usage.1812z.top/](https://usage.1812z.top/)
 ## 项目结构
 
 本项目包含以下组件：

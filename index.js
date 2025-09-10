@@ -1,130 +1,206 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
+const mongoose = require('mongoose');
+const cors = require('cors');
 
 const app = express();
 const PORT = 3000;
 const SECRET = 'your-secret-key';
 
 // 中间件
+app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 设备数据库
-let devices = [];
 
-// 记录应用使用时间
-function recordUsage(deviceId, appName) {
-    const now = new Date();
-    const device = devices.find(d => d.device === deviceId);
+// MongoDB连接
+mongoose.connect('mongodb://mongo_DbY3f234:mongo_r4Zzi334r@192.168.43.46:27017/deviceStats')
+    .then(() => console.log('成功连接到 MongoDB'))
+    .catch(err => console.error('MongoDB 连接错误:', err))
 
-    if (!device) return;
 
-    // 如果应用切换了，记录上一个应用的使用时间
-    if (device.app_name !== appName && device.running) {
-        const lastUsage = {
-            app_name: device.app_name,
-            start: device.startTime,
-            end: now,
-            duration: Math.round((now - device.startTime) / 60000) // 分钟
+
+// 定义数据模型
+const UsageRecord = mongoose.model('UsageRecord', {
+    deviceId: String,
+    appName: String,
+    startTime: Date,
+    endTime: Date,
+    duration: Number, // 分钟
+    date: Date // 添加日期字段用于查询
+});
+
+// 获取设备列表
+async function getDevices() {
+    // 获取所有有记录的设备ID
+    const devices = await UsageRecord.distinct('deviceId');
+
+    // 获取每个设备的最后状态
+    const deviceStatus = await Promise.all(devices.map(async deviceId => {
+        const lastRecord = await UsageRecord.findOne({ deviceId })
+            .sort({ startTime: -1 })
+            .limit(1);
+
+        return {
+            device: deviceId,
+            currentApp: lastRecord.appName,
+            running: lastRecord.endTime === null,
+            runningSince: lastRecord.startTime
         };
+    }));
 
-        device.usageHistory.push(lastUsage);
-    }
-
-    // 更新当前应用信息
-    device.app_name = appName;
-    device.running = true;
-    device.startTime = now;
+    return deviceStatus;
 }
 
-// 获取设备使用统计
-function getDeviceStats(deviceId) {
-    const device = devices.find(d => d.device === deviceId);
-    if (!device) return null;
+// 记录应用使用时间
+async function recordUsage(deviceId, appName) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    // 按应用统计总时间
-    const appStats = {};
-    device.usageHistory.forEach(usage => {
-        appStats[usage.app_name] = (appStats[usage.app_name] || 0) + usage.duration;
+    // 查找当前设备的最后一条记录
+    const lastRecord = await UsageRecord.findOne({
+        deviceId,
+        endTime: null
+    }).sort({ startTime: -1 });
+
+    // 如果应用切换了，更新上一条记录的结束时间
+    if (lastRecord && lastRecord.appName !== appName) {
+        lastRecord.endTime = now;
+        lastRecord.duration = Math.round((now - lastRecord.startTime) / 60000);
+        await lastRecord.save();
+    }
+
+    // 创建新记录
+    const newRecord = new UsageRecord({
+        deviceId,
+        appName,
+        startTime: now,
+        endTime: null,
+        duration: 0,
+        date: today
     });
 
-    // 按小时统计使用时间
-    const hourlyStats = Array(24).fill(0);
-    device.usageHistory.forEach(usage => {
-        const hour = new Date(usage.start).getHours();
-        hourlyStats[hour] += usage.duration;
+    await newRecord.save();
+}
+
+// 停止应用时更新记录
+async function stopUsage(deviceId) {
+    const now = new Date();
+    const lastRecord = await UsageRecord.findOne({
+        deviceId,
+        endTime: null
+    }).sort({ startTime: -1 });
+
+    if (lastRecord) {
+        lastRecord.endTime = now;
+        lastRecord.duration = Math.round((now - lastRecord.startTime) / 60000);
+        await lastRecord.save();
+    }
+}
+
+// 获取某天的统计数据
+async function getDailyStats(deviceId, date) {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const records = await UsageRecord.find({
+        deviceId,
+        startTime: { $gte: startOfDay, $lte: endOfDay }
     });
 
-    // 按应用统计每小时使用时间
-    const appHourlyStats = {};
-    device.usageHistory.forEach(usage => {
-        const hour = new Date(usage.start).getHours();
-        const app = usage.app_name;
-
-        if (!appHourlyStats[app]) {
-            appHourlyStats[app] = Array(24).fill(0);
-        }
-
-        appHourlyStats[app][hour] += usage.duration;
-    });
-
-    return {
-        totalUsage: device.usageHistory.reduce((sum, usage) => sum + usage.duration, 0),
-        appStats,
-        hourlyStats,
-        appHourlyStats,
-        currentApp: device.app_name,
-        currentAppRunningTime: device.running ? Math.round((new Date() - device.startTime) / 60000) : 0
+    // 计算统计信息
+    const stats = {
+        totalUsage: records.reduce((sum, record) => sum + record.duration, 0),
+        appStats: {},
+        hourlyStats: Array(24).fill(0),
+        appHourlyStats: {}
     };
+
+    records.forEach(record => {
+        // 按应用统计总时间
+        stats.appStats[record.appName] = (stats.appStats[record.appName] || 0) + record.duration;
+
+        // 按小时统计使用时间
+        const hour = record.startTime.getHours();
+        stats.hourlyStats[hour] += record.duration;
+
+        // 按应用统计每小时使用时间
+        if (!stats.appHourlyStats[record.appName]) {
+            stats.appHourlyStats[record.appName] = Array(24).fill(0);
+        }
+        stats.appHourlyStats[record.appName][hour] += record.duration;
+    });
+
+    return stats;
 }
 
 // API端点
-app.post('/api', (req, res) => {
-    const { secret, device, app_name } = req.body;
+app.post('/api', async (req, res) => {
+    const { secret, device, app_name, running } = req.body;
 
     if (secret !== SECRET) {
         return res.status(401).json({ error: 'Invalid secret' });
     }
 
-    if (!device || !app_name) {
-        return res.status(400).json({ error: 'Missing device or app_name' });
+    if (!device) {
+        return res.status(400).json({ error: 'Missing device' });
     }
 
-    // 查找或创建设备
-    const existingDevice = devices.find(d => d.device === device);
-    if (!existingDevice) {
-        devices.push({
-            device,
-            app_name,
-            running: true,
-            startTime: new Date(),
-            usageHistory: []
-        });
-    } else {
-        recordUsage(device, app_name);
+    if (running !== false && !app_name) {
+        return res.status(400).json({ error: 'Missing app_name when running is true' });
     }
 
-    res.json({ success: true });
+    try {
+        if (running !== false) {
+            await recordUsage(device, app_name);
+        } else {
+            await stopUsage(device);
+        }
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Database error' });
+    }
 });
 
 // 获取设备列表
-app.get('/api/devices', (req, res) => {
-    res.json(devices.map(device => ({
-        device: device.device,
-        currentApp: device.app_name,
-        running: device.running,
-        runningSince: device.startTime
-    })));
+app.get('/api/devices', async (req, res) => {
+    try {
+        const devices = await getDevices();
+        res.json(devices);
+    } catch (error) {
+        res.status(500).json({ error: 'Database error' });
+    }
 });
 
-// 获取设备统计
-app.get('/api/stats/:deviceId', (req, res) => {
-    const stats = getDeviceStats(req.params.deviceId);
-    if (stats) {
+// 获取某天的统计数据
+app.get('/api/stats/:deviceId/:date', async (req, res) => {
+    try {
+        const date = new Date(req.params.date);
+        if (isNaN(date.getTime())) {
+            return res.status(400).json({ error: 'Invalid date format' });
+        }
+
+        const stats = await getDailyStats(req.params.deviceId, date);
         res.json(stats);
-    } else {
-        res.status(404).json({ error: 'Device not found' });
+    } catch (error) {
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+app.get('/api/stats/:deviceId', async (req, res) => {
+    try {
+        const date = new Date();
+        date.setHours(0, 0, 0, 0);
+
+        const stats = await getDailyStats(req.params.deviceId, date);
+        res.json(stats);
+    } catch (error) {
+        console.error('Error getting stats:', error);
+        res.status(500).json({ error: 'Database error' });
     }
 });
 

@@ -29,28 +29,59 @@ const DailyStat = mongoose.model('DailyStat', {
 // 应用切换记录 - 临时保存在内存中
 const recentAppSwitches = new Map(); // {deviceId: [{appName, timestamp}]}
 
+// 电量统计临时存储
+const batteryStats = new Map();
+
+function recordBattery(deviceId, level) {
+    const now = new Date();
+    if (!batteryStats.has(deviceId)) {
+        batteryStats.set(deviceId, []);
+    }
+    batteryStats.get(deviceId).push({
+        timestamp: now,
+        level: level
+    });
+
+    // 保留最近100条记录
+    if (batteryStats.get(deviceId).length > 100) {
+        batteryStats.get(deviceId).shift();
+    }
+}
+// 获取电量记录
+function getBatteryStats(deviceId) {
+    return batteryStats.get(deviceId) || [];
+}
+
 // 获取设备列表
 async function getDevices() {
-    const devices = await DailyStat.distinct('deviceId');
-    return await Promise.all(devices.map(async deviceId => {
+    return Array.from(recentAppSwitches.keys()).map(deviceId => {
         let currentApp = "Unknown";
         let runningSince = new Date();
-        let isRunning = true; // 默认运行状态
+        let isRunning = true;
+        let batteryLevel = 0;
 
+        // 获取最近电量
+        const batteryRecords = getBatteryStats(deviceId);
+        if (batteryRecords.length > 0) {
+            batteryLevel = batteryRecords[batteryRecords.length - 1].level;
+        }
+
+        // 获取应用状态
         if (recentAppSwitches.has(deviceId) && recentAppSwitches.get(deviceId).length > 0) {
             const lastSwitch = recentAppSwitches.get(deviceId)[0];
             currentApp = lastSwitch.appName;
             runningSince = lastSwitch.timestamp;
-            isRunning = lastSwitch.running !== false; // 检查运行状态
+            isRunning = lastSwitch.running !== false;
         }
 
         return {
             device: deviceId,
-            currentApp: currentApp,
-            running: isRunning, // 返回实际运行状态
-            runningSince: runningSince
+            currentApp,
+            running: isRunning,
+            runningSince,
+            batteryLevel
         };
-    }));
+    });
 }
 
 
@@ -183,7 +214,7 @@ async function getDailyStats(deviceId, date) {
 
 // API端点保持不变
 app.post('/api', async (req, res) => {
-    const { secret, device, app_name, running } = req.body;
+    const { secret, device, app_name, running, batteryLevel } = req.body;
 
     if (secret !== SECRET) {
         return res.status(401).json({ error: 'Invalid secret' });
@@ -197,8 +228,12 @@ app.post('/api', async (req, res) => {
         return res.status(400).json({ error: 'Missing app_name when running is true' });
     }
 
+    if (batteryLevel !== undefined && batteryLevel > 0 && batteryLevel < 101) {
+        recordBattery(device, batteryLevel);
+    }
+
     try {
-        await recordUsage(device, app_name, running);
+        await recordUsage(device, app_name, running, batteryLevel);
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: 'Database error' });

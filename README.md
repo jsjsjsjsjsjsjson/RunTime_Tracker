@@ -1,6 +1,8 @@
 # RunTime Tracker
 
 一个时间跟踪应用程序，用于监控和管理您的设备使用时间。
+<img width="2566" height="1162" alt="QQ20250911-123925" src="https://github.com/user-attachments/assets/b25e4700-0c74-4191-943b-33b54dd2cd66" />
+
 
 演示站点：[https://usage.1812z.top/](https://usage.1812z.top/)
 ## 项目结构

@@ -316,8 +316,6 @@ app.get('/api/recent/:deviceId', async (req, res) => {
 });
 
 
-
-
 // 获取某天统计数据
 app.get('/api/stats/:deviceId/:date', async (req, res) => {
     try {
@@ -343,6 +341,26 @@ app.get('/api/stats/:deviceId/:date', async (req, res) => {
             details: error.message
         });
     }
+});
+
+// IP地址获取
+function getClientIp(req) {
+    // 优先从X-Forwarded-For获取(适用于反向代理场景)
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) {
+        return typeof forwarded === 'string'
+            ? forwarded.split(',')[0].trim()
+            : forwarded[0].trim();
+    }
+
+    // 如果没有代理，直接使用connection的remoteAddress
+    return req.connection?.remoteAddress || req.socket?.remoteAddress || req.ip;
+}
+
+// 获取客户端IP地址
+app.get('/api/ip', (req, res) => {
+    const clientIp = getClientIp(req);
+    res.json({ ip: clientIp });
 });
 
 // 启动服务器

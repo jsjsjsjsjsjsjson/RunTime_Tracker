@@ -143,30 +143,46 @@ async function recordUsage(deviceId, appName, running) {
 
 // 更新每日统计
 async function updateDailyStat(deviceId, appName, timestamp, durationMinutes) {
-    const date = new Date(timestamp);
-    date.setHours(0, 0, 0, 0);
+    // 如果没有有效的时长则不处理
+    if (durationMinutes <= 0) return;
 
-    const hour = timestamp.getHours();
+    let remaining = durationMinutes;
+    let currentTime = new Date(timestamp);
 
-    // 查找或创建统计记录
-    let stat = await DailyStat.findOne({
-        deviceId,
-        date,
-        appName
-    });
+    while (remaining > 0) {
+        const date = new Date(currentTime);
+        date.setHours(0, 0, 0, 0);
 
-    if (!stat) {
-        stat = new DailyStat({
+        const hour = currentTime.getHours();
+        const nextHour = new Date(currentTime);
+        nextHour.setHours(hour + 1, 0, 0, 0);
+
+        const minutesThisHour = Math.min(
+            remaining,
+            Math.ceil((nextHour - currentTime) / 60000)
+        );
+
+        let stat = await DailyStat.findOne({
             deviceId,
             date,
-            appName,
-            hourlyUsage: Array(24).fill(0)
+            appName
         });
-    }
 
-    // 增加当前小时的使用时间（基于实际时间间隔）
-    stat.hourlyUsage[hour] += durationMinutes;
-    await stat.save();
+        if (!stat) {
+            stat = new DailyStat({
+                deviceId,
+                date,
+                appName,
+                hourlyUsage: Array(24).fill(0)
+            });
+        }
+
+        stat.hourlyUsage[hour] += minutesThisHour;
+        await stat.save();
+
+        remaining -= minutesThisHour;
+        currentTime = nextHour;
+    }
 }
 
 // 获取某天的统计数据
